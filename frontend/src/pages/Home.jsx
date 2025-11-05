@@ -1,47 +1,56 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import io from "socket.io-client";
+import UserList from "../components/UserList";
 
-const socket = io("http://localhost:5000"); // backend Socket.IO
+const socket = io("http://localhost:5000", { transports: ["websocket"] });
 
 export default function Home() {
   const navigate = useNavigate();
-
-  // ✅ Kiểm tra user đã đăng nhập chưa
   const user = JSON.parse(localStorage.getItem("user") || "null");
 
   const [chats, setChats] = useState([]);
   const [selectedChat, setSelectedChat] = useState(null);
   const [messages, setMessages] = useState([]);
 
-  // Nếu chưa login → chuyển về login
+  // ref để scroll xuống cuối
+  const messagesEndRef = useRef(null);
+
+  // ✅ Tự động cuộn xuống khi có tin nhắn mới
   useEffect(() => {
-    if (!user) {
-      navigate("/login");
-    }
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  // Nếu chưa login → về trang login
+  useEffect(() => {
+    if (!user) navigate("/login");
   }, []);
 
-  // ✅ Lấy danh sách chat khi vào trang Home
+  // ✅ Kết nối socket khi có user
+  useEffect(() => {
+    if (user?._id) {
+      socket.emit("setup", user);
+    }
+  }, [user]);
+
+  // ✅ Lấy danh sách chat
   useEffect(() => {
     const fetchChats = async () => {
       try {
-        const res = await fetch(
-          `http://localhost:5000/api/chats?userId=${user._id}`
-        );
+        const res = await fetch(`http://localhost:5000/api/chats?userId=${user._id}`);
         const data = await res.json();
         setChats(data);
       } catch (err) {
         console.error("Lỗi load danh sách chat:", err);
       }
     };
-
     if (user?._id) fetchChats();
   }, [user]);
 
-  // ✅ Mỗi khi chọn chat → join room socket
+  // ✅ Mỗi khi chọn chat → join socket room
   useEffect(() => {
     if (selectedChat?._id) {
-      socket.emit("join-chat", selectedChat._id);
+      socket.emit("joinChat", selectedChat._id);
       fetchMessages(selectedChat._id);
     }
   }, [selectedChat]);
@@ -57,59 +66,45 @@ export default function Home() {
     }
   };
 
-  // ✅ Lắng nghe tin nhắn realtime
+  // ✅ Nhận tin nhắn realtime
   useEffect(() => {
-    socket.on("receive-message", (msg) => {
+    socket.on("messageReceived", (msg) => {
       if (msg.chatId === selectedChat?._id) {
-        setMessages((prev) => [...prev, msg]);
+        setMessages((prev) => {
+          const exists = prev.some((m) => m._id === msg._id);
+          if (exists) return prev;
+          return [...prev, msg];
+        });
       }
     });
 
-    return () => socket.off("receive-message");
+    return () => socket.off("messageReceived");
   }, [selectedChat]);
-
 
   return (
     <div className="flex h-screen bg-gray-100">
-
       {/* Sidebar */}
       <div className="w-64 bg-white border-r shadow-sm p-4">
         <h2 className="text-xl font-semibold mb-4 text-blue-600">
           Xin chào, {user?.name} 👋
         </h2>
 
-        <h3 className="font-medium text-gray-600 mb-2">Danh sách chat</h3>
-        <div className="flex flex-col space-y-2">
-          {chats.map((chat) => (
-            <button
-              key={chat._id}
-              onClick={() => setSelectedChat(chat)}
-              className={`p-3 rounded-lg text-left ${
-                selectedChat?._id === chat._id
-                  ? "bg-blue-500 text-white"
-                  : "bg-gray-100 hover:bg-gray-200"
-              }`}
-            >
-              {chat.isGroup
-                ? chat.name
-                : chat.members.find((m) => m._id !== user._id)?.name}
-            </button>
-          ))}
-        </div>
+        <h3 className="font-medium text-gray-600 mb-2">Người dùng khác</h3>
+        <UserList
+          currentUser={user}
+          chats={chats}
+          setChats={setChats}
+          setSelectedChat={setSelectedChat}
+        />
       </div>
 
       {/* Chat Window */}
       <div className="flex flex-col flex-1">
-
-        {/* Nếu chưa chọn chat */}
-        {!selectedChat && (
+        {!selectedChat ? (
           <div className="flex items-center justify-center h-full text-lg text-gray-500">
             Hãy chọn một cuộc trò chuyện 👈
           </div>
-        )}
-
-        {/* Nếu đã chọn chat */}
-        {selectedChat && (
+        ) : (
           <>
             {/* Header */}
             <div className="p-4 bg-white shadow flex items-center justify-between">
@@ -141,6 +136,9 @@ export default function Home() {
                   )}
                 </div>
               ))}
+
+              {/* ✅ Điểm neo để scroll */}
+              <div ref={messagesEndRef} />
             </div>
 
             {/* Input */}
@@ -156,7 +154,7 @@ export default function Home() {
   );
 }
 
-// ✅ Tách input box ra component nhỏ cho dễ quản lý
+// ✅ Component nhập & gửi tin nhắn
 function MessageInput({ user, chat, setMessages }) {
   const [text, setText] = useState("");
 
@@ -172,17 +170,16 @@ function MessageInput({ user, chat, setMessages }) {
     try {
       const res = await fetch("http://localhost:5000/api/messages", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-
       const data = await res.json();
+
+      // ✅ Thêm tin nhắn mới
       setMessages((prev) => [...prev, data]);
 
-      // gửi realtime
-      socket.emit("send-message", data);
+      // ✅ Gửi realtime đến người khác
+      socket.emit("newMessage", data);
 
       setText("");
     } catch (err) {
@@ -198,6 +195,7 @@ function MessageInput({ user, chat, setMessages }) {
         placeholder="Nhập tin nhắn..."
         value={text}
         onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && handleSend()} // enter để gửi
       />
       <button
         onClick={handleSend}

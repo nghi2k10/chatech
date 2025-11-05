@@ -1,24 +1,67 @@
 import express from "express";
 import Chat from "../models/Chat.js";
-import Message from "../models/Message.js";
+import User from "../models/User.js";
 
 const router = express.Router();
 
-// Get all chats for user
+/**
+ * ✅ Lấy danh sách chat mà user tham gia
+ * GET /api/chats?userId=...
+ */
 router.get("/", async (req, res) => {
-  const userId = req.query.userId;
-  const chats = await Chat.find({ members: userId })
-    .populate("members", "-password")
-    .populate("latestMessage");
-  res.json(chats);
+  try {
+    const { userId } = req.query;
+    if (!userId) return res.status(400).json({ message: "Thiếu userId" });
+
+    // Tìm tất cả chat mà user đang tham gia
+    const chats = await Chat.find({ members: { $in: [userId] } })
+      .populate("members", "-password")
+      .populate("latestMessage")
+      .sort({ updatedAt: -1 });
+
+    res.json(chats);
+  } catch (err) {
+    console.error("Lỗi load danh sách chat:", err);
+    res.status(500).json({ message: "Server error" });
+  }
 });
 
-// Create chat (1-1)
+/**
+ * ✅ Tạo mới chat (1-1 hoặc nhóm)
+ * POST /api/chats
+ * body: { isGroup, members, name? }
+ */
 router.post("/", async (req, res) => {
-  const { members, name } = req.body;
-  const chat = await Chat.create({ members, name, isGroup: false });
-  const fullChat = await Chat.findById(chat._id).populate("members", "-password");
-  res.json(fullChat);
+  try {
+    const { isGroup, members, name } = req.body;
+
+    if (!members || members.length === 0) {
+      return res.status(400).json({ message: "Thiếu danh sách thành viên" });
+    }
+
+    // Nếu là chat 1-1 thì kiểm tra có tồn tại chưa
+    if (!isGroup && members.length === 2) {
+      const existingChat = await Chat.findOne({
+        isGroup: false,
+        members: { $all: members, $size: 2 },
+      }).populate("members", "-password");
+
+      if (existingChat) return res.json(existingChat);
+    }
+
+    // Tạo chat mới
+    const newChat = await Chat.create({
+      name: isGroup ? name : "",
+      isGroup: !!isGroup,
+      members,
+    });
+
+    const fullChat = await newChat.populate("members", "-password");
+    res.json(fullChat);
+  } catch (err) {
+    console.error("Lỗi tạo chat:", err);
+    res.status(500).json({ message: "Server error" });
+  }
 });
 
 export default router;

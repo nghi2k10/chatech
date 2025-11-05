@@ -1,29 +1,56 @@
 import express from "express";
 import Message from "../models/Message.js";
-import multer from "multer";
-import cloudinary from "../utils/cloudinary.js";
+import Chat from "../models/Chat.js";
 
 const router = express.Router();
-const upload = multer({ dest: "uploads/" });
 
-// Get messages
+/**
+ * ✅ Lấy danh sách tin nhắn của 1 chat
+ * GET /api/messages/:chatId
+ */
 router.get("/:chatId", async (req, res) => {
-  const messages = await Message.find({ chatId: req.params.chatId })
-    .populate("senderId", "-password");
-  res.json(messages);
+  try {
+    const messages = await Message.find({ chatId: req.params.chatId })
+      .populate("senderId", "name avatar")
+      .sort({ createdAt: 1 });
+    res.json(messages);
+  } catch (err) {
+    console.error("Lỗi load messages:", err);
+    res.status(500).json({ message: "Lỗi server khi load tin nhắn" });
+  }
 });
 
-// Send message (text + optional media)
-router.post("/", upload.single("media"), async (req, res) => {
-  let mediaUrl = null;
-  if (req.file) {
-    const result = await cloudinary.uploader.upload(req.file.path);
-    mediaUrl = result.secure_url;
-  }
+/**
+ * ✅ Gửi tin nhắn mới
+ * POST /api/messages
+ */
+router.post("/", async (req, res) => {
+  try {
+    const { chatId, senderId, text, media } = req.body;
 
-  const { chatId, senderId, text } = req.body;
-  const message = await Message.create({ chatId, senderId, text, media: mediaUrl });
-  res.json(message);
+    if (!chatId || !senderId) {
+      return res.status(400).json({ message: "Thiếu chatId hoặc senderId" });
+    }
+
+    const newMessage = await Message.create({
+      chatId,
+      senderId,
+      text,
+      media: media || null,
+    });
+
+    // ✅ Cập nhật tin nhắn mới nhất cho chat
+    await Chat.findByIdAndUpdate(chatId, { latestMessage: newMessage._id });
+
+    // ✅ Populate để gửi lại dữ liệu đầy đủ cho frontend
+    const populatedMsg = await Message.findById(newMessage._id)
+      .populate("senderId", "name avatar");
+
+    res.json(populatedMsg);
+  } catch (err) {
+    console.error("Lỗi gửi tin nhắn:", err);
+    res.status(500).json({ message: "Lỗi server khi gửi tin nhắn" });
+  }
 });
 
 export default router;

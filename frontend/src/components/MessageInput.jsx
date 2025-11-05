@@ -1,29 +1,44 @@
 import { useState } from "react";
-import { sendMessage } from "../api";
+import axios from "axios";
+import { io } from "socket.io-client";
 
-export default function MessageInput({ socket, selectedChat, user, setMessages }) {
+const socket = io("http://localhost:5000");
+
+export default function MessageInput({ currentChat, currentUser }) {
   const [text, setText] = useState("");
-  const [file, setFile] = useState(null);
 
-  const handleSend = async () => {
-    const formData = new FormData();
-    formData.append("chatId", selectedChat._id);
-    formData.append("senderId", user._id);
-    formData.append("text", text);
-    if (file) formData.append("media", file);
+  const sendMessage = async () => {
+    if (!text.trim()) return;
 
-    const { data } = await sendMessage(formData);
-    socket.emit("send-message", data);
-    setMessages(prev => [...prev, data]);
-    setText("");
-    setFile(null);
+    try {
+      const res = await axios.post("http://localhost:5000/api/messages", {
+        chatId: currentChat._id,
+        senderId: currentUser._id,
+        text,
+      });
+
+      // Gửi tin nhắn realtime qua socket
+      socket.emit("newMessage", res.data);
+      setText("");
+    } catch (err) {
+      console.error("Lỗi gửi tin:", err);
+    }
   };
 
   return (
-    <div style={{ display: "flex", padding: 10 }}>
-      <input style={{ flex: 1 }} value={text} onChange={e => setText(e.target.value)} placeholder="Type a message..." />
-      <input type="file" onChange={e => setFile(e.target.files[0])} />
-      <button onClick={handleSend}>Send</button>
+    <div className="flex p-3 border-t">
+      <input
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        className="flex-1 border rounded px-2 py-1"
+        placeholder="Nhập tin nhắn..."
+      />
+      <button
+        onClick={sendMessage}
+        className="ml-2 bg-blue-500 text-white px-4 py-1 rounded"
+      >
+        Gửis
+      </button>
     </div>
   );
 }
