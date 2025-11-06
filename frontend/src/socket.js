@@ -1,28 +1,41 @@
+// src/socket.js
 import { io } from "socket.io-client";
 
-const SOCKET_URL = "http://localhost:5000";
+let socket = null;
 
-export const socket = io(SOCKET_URL, {
-  transports: ["websocket"],
-  reconnection: true,
-  reconnectionAttempts: 5,
-});
+// ⚡ Kết nối socket nếu chưa kết nối
+export const connectSocket = (userId) => {
+  if (!socket || !socket.connected) {
+    socket = io("http://localhost:5000", {
+      transports: ["websocket"],
+      query: { userId },
+      reconnection: true,          // tự động reconnect nếu mất kết nối
+      reconnectionAttempts: 5,     // thử lại tối đa 5 lần
+      reconnectionDelay: 2000,     // delay 2s mỗi lần
+    });
 
-export const joinChat = (chatId) => {
-  if (socket && chatId) socket.emit("join chat", chatId);
+    console.log("🔌 Socket connecting...");
+
+    socket.on("connect", () => {
+      console.log("✅ Connected to socket:", socket.id);
+    });
+
+    socket.on("disconnect", (reason) => {
+      console.log("⚠️ Socket disconnected:", reason);
+    });
+  }
+
+  return socket;
 };
 
-export const sendMessage = (message) => {
-  if (socket && message) socket.emit("new message", message);
-};
+// Lấy socket hiện tại
+export const getSocket = () => socket;
 
-export const listenForMessages = (callback) => {
-  if (socket) socket.on("message received", callback);
+// Ngắt kết nối khi logout
+export const disconnectSocket = () => {
+  if (socket) {
+    socket.disconnect();
+    socket = null;
+    console.log("🔴 Socket manually disconnected");
+  }
 };
-
-export const stopListening = () => {
-  if (socket) socket.off("message received");
-};
-
-socket.on("connect", () => console.log("✅ Socket connected:", socket.id));
-socket.on("disconnect", () => console.log("❌ Socket disconnected"));
